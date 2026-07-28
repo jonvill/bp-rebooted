@@ -351,7 +351,7 @@ public class CompactEpisodeSelector : MonoBehaviour
 	{
 		if (m_preButtons != null && m_preButtons.Count > 0 && target == m_preButtons[0])
 		{
-			m_centerEpisode = ((!IsRotated) ? m_preButtons[0] : m_episodesToggled[0]);
+			m_centerEpisode = ((!IsRotated) ? m_episodes[0] : m_episodesToggled[0]);
 		}
 		else
 		{

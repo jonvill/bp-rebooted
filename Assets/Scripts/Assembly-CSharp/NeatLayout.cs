@@ -91,7 +91,7 @@ public class NeatLayout : MonoBehaviour
 		return false;
 	}
 
-	private void Start()
+	private void Update()
 	{
 		OrganizeChildren();
 	}

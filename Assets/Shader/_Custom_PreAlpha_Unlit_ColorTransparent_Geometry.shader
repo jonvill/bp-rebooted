@@ -9,7 +9,7 @@ Shader "_Custom/PreAlpha_Unlit_ColorTransparent_Geometry" {
 		Pass {
 			LOD 100
 			Tags { "IGNOREPROJECTOR" = "true" "QUEUE" = "Transparent" "RenderType" = "Transparent" }
-			Blend SrcAlpha OneMinusSrcAlpha
+			Blend One OneMinusSrcAlpha
 			ZWrite Off
 			Cull Off
 			Fog {

@@ -11,7 +11,7 @@ Shader "_Custom/DailyChallengeMask" {
 		Pass {
 			LOD 100
 			Tags { "IGNOREPROJECTOR" = "true" "RenderType" = "Transparent" }
-			Blend SrcAlpha OneMinusSrcAlpha
+			Blend One OneMinusSrcAlpha
 			ZWrite Off
 			CGPROGRAM
 			#pragma vertex vert

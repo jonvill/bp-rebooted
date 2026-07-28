@@ -8,6 +8,7 @@ public class SplashPlayer : MonoBehaviour
 
 	private IEnumerator Start()
 	{
+		System.Threading.Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("en-US");
 		if (INUnity.Enabled)
 		{
 			INInitializer initializer = Object.Instantiate(Resources.Load<GameObject>("Innovation/INInitializer")).GetComponent<INInitializer>();
