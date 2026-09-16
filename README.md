@@ -61,3 +61,44 @@ Hot features that can be added:
 
 ## Legal Notice
 **This mod is not affiliated with Rovio in any way. Please note that the game Bad Piggies is developed by Rovio. Most of the unmodified source codes and resources belongs to them.**
+
+## Multiplayer (experimental)
+Press **F9** in the main menu (or type `mp` in the command interface) to open the multiplayer window.
+One player hosts (TCP port 7777, forward it for internet play). Games on the same network appear
+automatically in the join list (UDP port 7778); for other networks, or VPNs such as Tailscale, enter
+`ip:port` by hand. The host plays as usual: whatever level the host loads, everybody follows. Every
+player builds and drives their own contraption; the others are shown with name tags. Chat is built in.
+While you are in a multiplayer level the game never pauses time, so your vehicle does not freeze
+in mid-air for the others.
+
+Modes (selected by the host):
+- **Free Play** - build and drive together. The host can switch on *Solid contraptions* so vehicles collide.
+- **Distance** - timed rounds; the pig that gets furthest (or highest) from the start wins.
+- **Capture the Flag** - a flag spawns on the ground away from the start; touch it and bring it back to the start zone.
+- **Battle** - other vehicles are solid once they leave the start zone; guns, TNT and ramming score points.
+
+Console: `mp host [port]`, `mp join <address>`, `mp leave`, `mp mode <freeplay|distance|ctf|battle>`, `mp say <text>`.
+Starter car for quick rounds (in a session, inside a level): **F7** builds a small car with engine, gearbox and motor wheels, **F8** starts or stops it, **F6** toggles the gearbox to reverse. The same buttons are in the F9 window.
+Each vehicle is simulated only by its own player (the physics is not deterministic across machines), so
+collisions between players can look slightly different on each screen. Code lives in `Assets/Scripts/Multiplayer`.
+
+## Releases and automatic updates
+Release builds update themselves. `Tools/Release.ps1` builds the player headless, and only if the build
+succeeded it packages the game, signs the manifest and publishes it:
+
+```
+powershell -ExecutionPolicy Bypass -File Tools\Release.ps1 -Notes "What changed"
+```
+
+- Close the Unity editor for this project first.
+- Output: `E:\bp-share\release\latest.json` plus `BadPiggiesRebooted-<build>.zip` (the last 3 are kept), and a
+  copy as `E:\bp-share\BadPiggiesRebooted-Multiplayer.zip` for manual downloads. Paths and the feed URL
+  (default `http://100.64.0.2:8088/release/`) are script parameters.
+- The feed must be reachable over HTTP, e.g. `python -m http.server 8088 --bind <ip> --directory E:\bp-share`.
+- A release build checks `latest.json` at start and every 30 minutes, downloads a newer build in the
+  background, verifies checksum and signature, and installs it in the main menu after a 15 second
+  countdown (*Later* postpones to the next start). Console: `update status|check|now|later`.
+- Updates are signed with `%USERPROFILE%\.bpre\update-signing-key.xml`. Keep a backup of it and never
+  commit it: without it, published games no longer accept updates. The public half lives in
+  `Assets/Scripts/Updater/UpdateSigningKey.cs`.
+- Builds made from the editor menu or `BPREDevTools.BuildFromCommandLine` are development builds and never update.

@@ -23,6 +23,9 @@ public class Bundle : MonoBehaviour
 
 		public AssetBundle LoadedAssetBundle { get; private set; }
 
+		/// <summary>True when the bundle file could not be loaded (missing, or built for another Unity version/platform).</summary>
+		public bool LoadFailed { get; set; }
+
 		public BundleObject(string newBundleId, string newBundleFileExtension, bool newLoadAtStart, string newBundleLocation = "")
 		{
 			BundleLocation = newBundleLocation;
@@ -182,8 +185,18 @@ public class Bundle : MonoBehaviour
 			AssetBundle assetBundle = request.assetBundle;
 			if (assetBundle != null)
 			{
+				bo.LoadFailed = false;
 				assetBundle.name = bo.BundleId;
 				bo.SetLoadedBundle(assetBundle);
+				onFinish?.Invoke();
+			}
+			else
+			{
+				// Do not stall the game forever on a broken bundle (e.g. one built with an older Unity
+				// version that only the editor can still read); the assets from it simply stay missing.
+				bo.LoadFailed = true;
+				Debug.LogError("AssetBundle '" + bo.BundleFileName + "' could not be loaded from '" + bundleLocation + "'. Continuing without it.");
+				AssetBundleLoadFailed?.Invoke();
 				onFinish?.Invoke();
 			}
 		}
@@ -284,7 +297,7 @@ public class Bundle : MonoBehaviour
 			{
 				num++;
 			}
-			if (bundleObject.Value.IsAssetBundleInMemory)
+			if (bundleObject.Value.IsAssetBundleInMemory || (bundleObject.Value.LoadAtStart && bundleObject.Value.LoadFailed))
 			{
 				num2++;
 			}

@@ -1419,6 +1419,12 @@ public sealed class LevelManager : WPFMonoBehaviour
 
 	private void OnApplicationFocus(bool focus)
 	{
+		// Do not auto-pause in a multiplayer level: the others keep playing, and with two
+		// windows on one machine the background window would pause constantly.
+		if (BPRE.Multiplayer.MultiplayerSession.KeepsWorldRunning)
+		{
+			return;
+		}
 		Shop shop = Singleton<IapManager>.Instance.GetShop();
 		if (!focus && (!(shop != null) || (!shop.gameObject.activeInHierarchy && !shop.SnoutCoinShop.gameObject.activeInHierarchy)) && !Application.isEditor && gameState is GameState.Running or GameState.Building)
 		{

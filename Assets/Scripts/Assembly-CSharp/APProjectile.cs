@@ -64,6 +64,7 @@ public class APProjectile : MonoBehaviour
 			m_triggered = true;
 		}
 		Collider[] array = Physics.OverlapSphere(base.transform.position, m_explosionRadius * INSettings.GetFloat(INFeature.GunProjectileExplosionRadius));
+		BPRE.Multiplayer.MultiplayerExplosionEvent.Send(base.transform.position, m_explosionRadius * INSettings.GetFloat(INFeature.GunProjectileExplosionRadius), m_explosionImpulse);
 		foreach (Collider collider in array)
 		{
 			GameObject gameObject = FindParentWithRigidBody(collider.gameObject);

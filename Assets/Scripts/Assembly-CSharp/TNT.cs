@@ -136,6 +136,7 @@ public class TNT : BasePart
 		m_triggered = true;
 		base.contraption.ChangeOneShotPartAmount(m_partType, EffectDirection(), -1);
 		Collider[] array = Physics.OverlapSphere(base.transform.position, m_explosionRadius * INSettings.GetFloat(INFeature.TNTExplosionRadius));
+		BPRE.Multiplayer.MultiplayerExplosionEvent.Send(base.transform.position, m_explosionRadius * INSettings.GetFloat(INFeature.TNTExplosionRadius), m_explosionImpulse);
 		foreach (Collider collider in array)
 		{
 			GameObject gameObject = FindParentWithRigidBody(collider.gameObject);

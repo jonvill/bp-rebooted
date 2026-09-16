@@ -763,7 +763,7 @@ PlayerSettings:
   suppressCommonWarnings: 0
   allowUnsafeCode: 1
   useDeterministicCompilation: 0
-  enableRoslynAnalyzers: 0
+  enableRoslynAnalyzers: 1
   additionalIl2CppArgs: 
   scriptingRuntimeVersion: 1
   gcIncremental: 0

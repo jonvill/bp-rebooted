@@ -42,7 +42,9 @@ public class GameTime : MonoBehaviour
 	public static void Pause(bool pause)
 	{
 		m_paused = pause;
-		if (pause)
+		// In a multiplayer level the world must keep running: freezing it would leave this
+		// player's contraption hanging in mid-air on everybody else's screen.
+		if (pause && !BPRE.Multiplayer.MultiplayerSession.KeepsWorldRunning)
 		{
 			Time.timeScale = 0f;
 		}

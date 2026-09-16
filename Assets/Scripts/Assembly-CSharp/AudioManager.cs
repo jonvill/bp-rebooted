@@ -193,6 +193,10 @@ public class AudioManager : Singleton<AudioManager>
 
 	public AudioSource SpawnOneShotEffect(AudioSource[] effectSources, Vector3 soundPosition)
 	{
+		if (effectSources == null || effectSources.Length == 0 || effectSources[0] == null)
+		{
+			return null;
+		}
 		if (CheckRepeatLimit(ref effectSources[0]))
 		{
 			int num = Random.Range(0, effectSources.Length);
@@ -203,6 +207,10 @@ public class AudioManager : Singleton<AudioManager>
 
 	public AudioSource SpawnOneShotEffect(AudioSource[] effectSources, Transform sourceParent)
 	{
+		if (effectSources == null || effectSources.Length == 0 || effectSources[0] == null)
+		{
+			return null;
+		}
 		if (CheckRepeatLimit(ref effectSources[0]))
 		{
 			int num = Random.Range(0, effectSources.Length);
@@ -213,12 +221,16 @@ public class AudioManager : Singleton<AudioManager>
 
 	public void PlayLoopingEffect(ref AudioSource effectSource)
 	{
+		if (effectSource == null)
+		{
+			return;
+		}
 		StartLoopingEffect(effectSource, null);
 	}
 
 	public AudioSource Spawn2dOneShotEffect(AudioSource effectSource)
 	{
-		if (base.gameObject.activeInHierarchy && !AudioMuted && active2dOneShotSounds.Count < 20)
+		if (effectSource != null && base.gameObject.activeInHierarchy && !AudioMuted && active2dOneShotSounds.Count < 20)
 		{
 			AudioSource audioSource = Object.Instantiate(effectSource, base.transform, true);
 			audioSource.gameObject.name = "AudioOneShot -" + effectSource.name;
@@ -232,7 +244,7 @@ public class AudioManager : Singleton<AudioManager>
 
 	public AudioSource SpawnOneShotEffect(AudioSource effectSource, Vector3 soundPosition)
 	{
-		if (base.gameObject.activeInHierarchy && active3dOneShotSounds.Count < 20)
+		if (effectSource != null && base.gameObject.activeInHierarchy && active3dOneShotSounds.Count < 20)
 		{
 			AudioSource audioSource = Object.Instantiate(effectSource, base.transform, true);
 			audioSource.mute = AudioMuted;
@@ -282,8 +294,30 @@ public class AudioManager : Singleton<AudioManager>
 		}
 	}
 
+	/// <summary>
+	/// Stand-in for an effect whose prefab is missing (e.g. its asset bundle could not be loaded):
+	/// a muted AudioSource without a clip, so callers that expect a looping sound object keep working.
+	/// </summary>
+	private static GameObject CreateSilentSource(string name, Transform parent)
+	{
+		GameObject gameObject = new GameObject(name);
+		if (parent != null)
+		{
+			gameObject.transform.SetParent(parent, false);
+		}
+		AudioSource audioSource = gameObject.AddComponent<AudioSource>();
+		audioSource.playOnAwake = false;
+		audioSource.loop = true;
+		audioSource.volume = 0f;
+		return gameObject;
+	}
+
 	public GameObject SpawnLoopingEffect(AudioSource effectSource, Transform soundHost)
 	{
+		if (effectSource == null || soundHost == null || effectSource.clip == null)
+		{
+			return CreateSilentSource("LoopingSound-missing", soundHost);
+		}
 		Transform transform = soundHost.Find("LoopingSound-" + effectSource.GetComponent<AudioSource>().clip.name);
 		AudioSource audioSource = ((!(transform == null)) ? transform.GetComponent<AudioSource>() : Object.Instantiate(effectSource));
 		audioSource.gameObject.name = "LoopingSound-" + audioSource.GetComponent<AudioSource>().clip.name;
@@ -311,6 +345,10 @@ public class AudioManager : Singleton<AudioManager>
 
 	public GameObject SpawnCombinedLoopingEffect(AudioSource effectSource, Transform soundHost)
 	{
+		if (effectSource == null || soundHost == null)
+		{
+			return CreateSilentSource("CombinedLoop-missing", soundHost);
+		}
 		if (!m_combinedLoops.TryGetValue(effectSource, out CombinedLoopingEffect value))
 		{
 			value = new CombinedLoopingEffect(effectSource);
@@ -322,6 +360,14 @@ public class AudioManager : Singleton<AudioManager>
 
 	public void RemoveCombinedLoopingEffect(AudioSource prefab, GameObject loopingEffect)
 	{
+		if (prefab == null)
+		{
+			if (loopingEffect != null)
+			{
+				Object.Destroy(loopingEffect);
+			}
+			return;
+		}
 		if (m_combinedLoops.TryGetValue(prefab, out CombinedLoopingEffect value))
 		{
 			value.RemoveLoop(loopingEffect);
@@ -394,6 +440,12 @@ public class AudioManager : Singleton<AudioManager>
 
 	public GameObject SpawnMusic(AudioSource musicPrefab)
 	{
+		if (musicPrefab == null)
+		{
+			GameObject silent = CreateSilentSource("Music-missing", null);
+			Object.DontDestroyOnLoad(silent);
+			return silent;
+		}
 		GameObject gameObject = Object.Instantiate(musicPrefab.gameObject);
 		gameObject.GetComponent<AudioSource>().mute = AudioMuted;
 		Object.DontDestroyOnLoad(gameObject);
@@ -490,6 +542,10 @@ public class AudioManager : Singleton<AudioManager>
 
 	private bool CheckRepeatLimit(ref AudioSource audioSource)
 	{
+		if (audioSource == null || audioSource.clip == null)
+		{
+			return false;
+		}
 		int instanceID = audioSource.clip.GetInstanceID();
 		if (!previousPlayTimes.ContainsKey(instanceID))
 		{
