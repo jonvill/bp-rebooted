@@ -53,6 +53,13 @@ namespace BPRE.Updater
 
 		private const float RestartCountdown = 15f;
 
+		private const float RetryInterval = 60f;
+
+		private const string InstallLockFileName = "installing.lock";
+
+		/// <summary>An install lock older than this is considered stale (e.g. the installer crashed).</summary>
+		private const double InstallLockMaxAgeMinutes = 15.0;
+
 		private const string PendingFileName = "pending.json";
 
 		private const string FailedBuildKey = "bpre_update_failed_build";
@@ -88,6 +95,12 @@ namespace BPRE.Updater
 		private bool m_postponed;
 
 		private float m_countdownEnd = -1f;
+
+		private float m_nextLockCheck;
+
+		private bool m_otherInstanceInstalling;
+
+		private float m_quitForOtherInstallerAt = -1f;
 
 		private GUIStyle m_bannerStyle;
 
@@ -158,6 +171,11 @@ namespace BPRE.Updater
 				Action callback = m_onWorkerDone;
 				m_onWorkerDone = null;
 				callback?.Invoke();
+			}
+			if (State != UpdateState.Installing && Time.realtimeSinceStartup >= m_nextLockCheck)
+			{
+				m_nextLockCheck = Time.realtimeSinceStartup + 1f;
+				FollowOtherInstaller();
 			}
 			if (!m_workerBusy && State != UpdateState.Ready && State != UpdateState.Installing && Time.realtimeSinceStartup >= m_nextCheck)
 			{
@@ -251,24 +269,72 @@ namespace BPRE.Updater
 			DownloadProgress = 0f;
 			StatusText = "Downloading update " + manifest.version + "...";
 			string url = m_build.updateUrl + Uri.EscapeDataString(manifest.file);
-			string partPath = zipPath + ".part";
+			// A private temp file per process: several game windows may download the same update at once.
+			string partPath = zipPath + "." + Process.GetCurrentProcess().Id + ".part";
 			string expected = manifest.sha256.ToLowerInvariant();
 			long size = manifest.size;
 			RunWorker(() =>
 			{
-				HttpDownloadFile(url, partPath, size);
-				string actual = Sha256OfFile(partPath);
-				if (actual != expected)
+				// Another instance may already have finished the download.
+				if (File.Exists(zipPath) && TryHashEquals(zipPath, expected))
 				{
-					File.Delete(partPath);
-					throw new Exception("checksum mismatch (download corrupted or tampered)");
+					return;
 				}
-				if (File.Exists(zipPath))
+				try
 				{
-					File.Delete(zipPath);
+					HttpDownloadFile(url, partPath, size);
+					if (Sha256OfFile(partPath) != expected)
+					{
+						throw new Exception("checksum mismatch (download corrupted or tampered)");
+					}
+					try
+					{
+						if (File.Exists(zipPath))
+						{
+							File.Delete(zipPath);
+						}
+						File.Move(partPath, zipPath);
+					}
+					catch (IOException)
+					{
+						// Lost the race against another instance: fine if its file is complete.
+						if (!TryHashEquals(zipPath, expected))
+						{
+							throw;
+						}
+					}
 				}
-				File.Move(partPath, zipPath);
+				finally
+				{
+					TryDelete(partPath);
+				}
 			}, () => OnZipDownloaded(manifest, zipPath));
+		}
+
+		private static bool TryHashEquals(string path, string expected)
+		{
+			try
+			{
+				return Sha256OfFile(path) == expected;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		private static void TryDelete(string path)
+		{
+			try
+			{
+				if (File.Exists(path))
+				{
+					File.Delete(path);
+				}
+			}
+			catch
+			{
+			}
 		}
 
 		private void OnZipDownloaded(UpdateManifest manifest, string zipPath)
@@ -276,6 +342,8 @@ namespace BPRE.Updater
 			if (m_workerError != null)
 			{
 				Fail("Update download failed: " + m_workerError);
+				// Transient problems (network, file busy) deserve another try soon.
+				m_nextCheck = Time.realtimeSinceStartup + RetryInterval;
 				return;
 			}
 			m_pending = new PendingUpdate
@@ -302,13 +370,17 @@ namespace BPRE.Updater
 		// Installing
 		// ------------------------------------------------------------------
 
-		/// <summary>Only restart where nothing is lost: in the main menu and outside a multiplayer session.</summary>
+		/// <summary>
+		/// Only restart where nothing is lost: the main menu or the version selection at startup
+		/// (game state still undefined), and never during a multiplayer session.
+		/// </summary>
 		private static bool IsSafeToRestart()
 		{
 			try
 			{
 				GameManager gameManager = Singleton<GameManager>.Instance;
-				if (gameManager == null || gameManager.GetGameState() != GameManager.GameState.MainMenu)
+				GameManager.GameState state = gameManager != null ? gameManager.GetGameState() : GameManager.GameState.Undefined;
+				if (state != GameManager.GameState.MainMenu && state != GameManager.GameState.Undefined)
 				{
 					return false;
 				}
@@ -365,16 +437,126 @@ namespace BPRE.Updater
 				DeletePending(pending);
 				return false;
 			}
+			int owner = ReadInstallLockOwner();
+			if (owner != 0 && owner != Process.GetCurrentProcess().Id)
+			{
+				// Another window is installing right now; this window closes via FollowOtherInstaller.
+				return false;
+			}
 			m_pending = pending;
 			Available = null;
 			InstallNow();
 			return true;
 		}
 
+		// ------------------------------------------------------------------
+		// Several game windows (e.g. local multiplayer): only one installs
+		// ------------------------------------------------------------------
+
+		private string InstallLockPath => Path.Combine(m_updateDir, InstallLockFileName);
+
+		/// <summary>Process id holding a valid install lock, or 0 (no lock, stale lock, or owner gone).</summary>
+		private int ReadInstallLockOwner()
+		{
+			try
+			{
+				FileInfo lockFile = new FileInfo(InstallLockPath);
+				if (!lockFile.Exists || (DateTime.UtcNow - lockFile.LastWriteTimeUtc).TotalMinutes > InstallLockMaxAgeMinutes)
+				{
+					return 0;
+				}
+				if (!int.TryParse(File.ReadAllText(lockFile.FullName).Trim(), out int pid))
+				{
+					// Being written right now by another window.
+					return -1;
+				}
+				return pid;
+			}
+			catch
+			{
+				// Unreadable: most likely held open by the window that is creating it.
+				return File.Exists(InstallLockPath) ? -1 : 0;
+			}
+		}
+
+		/// <summary>Atomically claims the install for this window. Stale locks (older than 15 minutes) are taken over.</summary>
+		private bool TryAcquireInstallLock()
+		{
+			int self = Process.GetCurrentProcess().Id;
+			for (int attempt = 0; attempt < 2; attempt++)
+			{
+				try
+				{
+					using (FileStream stream = new FileStream(InstallLockPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+					using (StreamWriter writer = new StreamWriter(stream))
+					{
+						writer.Write(self);
+					}
+					return true;
+				}
+				catch (IOException)
+				{
+					int owner = ReadInstallLockOwner();
+					if (owner == self)
+					{
+						return true;
+					}
+					if (owner != 0)
+					{
+						return false;
+					}
+					TryDelete(InstallLockPath);
+				}
+			}
+			return false;
+		}
+
+		/// <summary>
+		/// When another window of this installation is installing an update, this window has to close
+		/// too, otherwise the installer cannot replace the files. Close automatically where nothing is lost.
+		/// </summary>
+		private void FollowOtherInstaller()
+		{
+			int owner = ReadInstallLockOwner();
+			bool other = owner != 0 && owner != Process.GetCurrentProcess().Id;
+			if (other && !m_otherInstanceInstalling)
+			{
+				Debug.Log("[Updater] Another game window (pid " + owner + ") is installing an update.");
+			}
+			m_otherInstanceInstalling = other;
+			if (!other)
+			{
+				m_quitForOtherInstallerAt = -1f;
+				return;
+			}
+			if (IsSafeToRestart())
+			{
+				if (m_quitForOtherInstallerAt < 0f)
+				{
+					m_quitForOtherInstallerAt = Time.realtimeSinceStartup + 3f;
+				}
+				else if (Time.realtimeSinceStartup >= m_quitForOtherInstallerAt)
+				{
+					Debug.Log("[Updater] Closing so the update can be installed.");
+					Application.Quit();
+				}
+			}
+			else
+			{
+				m_quitForOtherInstallerAt = -1f;
+			}
+		}
+
 		public void InstallNow()
 		{
 			if (m_pending == null || State == UpdateState.Installing)
 			{
+				return;
+			}
+			if (!TryAcquireInstallLock())
+			{
+				// Someone else is already on it; FollowOtherInstaller closes this window.
+				m_otherInstanceInstalling = true;
 				return;
 			}
 			State = UpdateState.Installing;
@@ -397,7 +579,8 @@ namespace BPRE.Updater
 						" -Sha256 " + m_pending.sha256 +
 						" -Target " + Quote(target) +
 						" -Exe " + Quote(exe) +
-						" -Log " + Quote(log),
+						" -Log " + Quote(log) +
+						" -Lock " + Quote(InstallLockPath),
 					UseShellExecute = false,
 					CreateNoWindow = true
 				};
@@ -407,6 +590,7 @@ namespace BPRE.Updater
 			}
 			catch (Exception ex)
 			{
+				TryDelete(InstallLockPath);
 				Fail("Could not start the installer: " + ex.Message);
 			}
 		}
@@ -423,7 +607,7 @@ namespace BPRE.Updater
 			return "\"" + value.Replace("\"", "") + "\"";
 		}
 
-		private const string ApplyScript = @"param([int]$WaitPid, [string]$Zip, [string]$Sha256, [string]$Target, [string]$Exe, [string]$Log)
+		private const string ApplyScript = @"param([int]$WaitPid, [string]$Zip, [string]$Sha256, [string]$Target, [string]$Exe, [string]$Log, [string]$Lock)
 $ErrorActionPreference = 'Stop'
 function Write-Log([string]$m) { Add-Content -Path $Log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m) }
 try {
@@ -448,6 +632,8 @@ try {
   Write-Log 'Update installed'
 } catch {
   Write-Log ('Update failed: ' + $_.Exception.Message)
+} finally {
+  if ($Lock) { Remove-Item $Lock -Force -ErrorAction SilentlyContinue }
 }
 Start-Process -FilePath $Exe -WorkingDirectory $Target
 ";
@@ -631,6 +817,13 @@ Start-Process -FilePath $Exe -WorkingDirectory $Target
 			}
 			string text = null;
 			bool showButtons = false;
+			if (m_otherInstanceInstalling)
+			{
+				text = IsSafeToRestart()
+					? "Another game window is installing an update. This window closes in a moment."
+					: "Another game window is installing an update. Close this window when you are done to finish it.";
+			}
+			else
 			switch (State)
 			{
 			case UpdateState.Downloading:
