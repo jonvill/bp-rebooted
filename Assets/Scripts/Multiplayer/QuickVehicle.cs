@@ -61,9 +61,40 @@ namespace BPRE.Multiplayer
 			return true;
 		}
 
-		private static BasePart Place(ConstructionUI ui, GameData gameData, BasePart.PartType type, int x, int y)
+		/// <summary>Starter car with two rainbow rockets on top (F5). F4 fires the rockets.</summary>
+		public static bool BuildRainbow(out string error)
 		{
-			BasePart prefab = gameData.GetCustomPart(type, 0);
+			if (!Build(out error))
+			{
+				return false;
+			}
+			ConstructionUI ui = WPFMonoBehaviour.levelManager.ConstructionUI;
+			BasePart rocketA = Place(ui, WPFMonoBehaviour.gameData, BasePart.PartType.Rocket, 0, 2, BPRE.Fun.RainbowRocket.CustomIndex);
+			BasePart rocketB = Place(ui, WPFMonoBehaviour.gameData, BasePart.PartType.Rocket, 1, 2, BPRE.Fun.RainbowRocket.CustomIndex);
+			if (rocketA == null || rocketB == null)
+			{
+				error = "Rainbow rockets are not available in this level.";
+				return false;
+			}
+			return true;
+		}
+
+		/// <summary>Fires the rockets of the running contraption.</summary>
+		public static bool FireRockets()
+		{
+			Contraption contraption = Contraption.Instance;
+			LevelManager levelManager = WPFMonoBehaviour.levelManager;
+			if (contraption == null || levelManager == null || levelManager.gameState != LevelManager.GameState.Running)
+			{
+				return false;
+			}
+			contraption.ActivatePartType(BasePart.PartType.Rocket, BasePart.Direction.Right);
+			return true;
+		}
+
+		private static BasePart Place(ConstructionUI ui, GameData gameData, BasePart.PartType type, int x, int y, int customIndex = 0)
+		{
+			BasePart prefab = gameData.GetCustomPart(type, customIndex);
 			if (prefab == null)
 			{
 				Debug.LogWarning("[Multiplayer] QuickVehicle: no prefab for " + type);
@@ -98,6 +129,10 @@ namespace BPRE.Multiplayer
 			while (Time.realtimeSinceStartup < deadline)
 			{
 				Contraption contraption = ContraptionSync.Instance != null ? ContraptionSync.Instance.TrackedContraption : null;
+				if (contraption == null && WPFMonoBehaviour.levelManager != null && WPFMonoBehaviour.levelManager.gameState == LevelManager.GameState.Running)
+				{
+					contraption = Contraption.Instance;
+				}
 				if (contraption != null)
 				{
 					yield return new WaitForSecondsRealtime(0.3f);

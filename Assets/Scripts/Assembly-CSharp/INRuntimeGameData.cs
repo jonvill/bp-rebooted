@@ -59,6 +59,19 @@ public class INRuntimeGameData : Singleton<INRuntimeGameData>
 		InitializePart(INFeature.ElectricalSystem, SetElectricalSystem);
 		InitializePart(INFeature.AlienExtras, SetAlienExtras);
 		//InitializePart(INFeature.NeuralPart, SetNeuralPart);
+		AddRainbowRocket();
+	}
+
+	private void AddRainbowRocket()
+	{
+		GameObject rocket = m_gameData.GetPart(BasePart.PartType.Rocket);
+		if (rocket == null || GetCustomPart(BasePart.PartType.Rocket, BPRE.Fun.RainbowRocket.CustomIndex) != null)
+		{
+			return;
+		}
+		BasePart basePart = CreatePartAndSetParent(rocket.GetComponent<BasePart>());
+		BPRE.Fun.RainbowRocket.SetupTemplate(basePart);
+		AddCustomPart(basePart);
 	}
 
 	private void InitializePart(INFeature feature, Action action)

@@ -53,6 +53,8 @@ namespace BPRE.Multiplayer
 
 		private const string PrefModeKey = "bpre_mp_mode";
 
+		private const string PrefServerNameKey = "bpre_mp_servername";
+
 		private const int HostPlayerId = 1;
 
 		private const int MaxChatLines = 100;
@@ -110,6 +112,23 @@ namespace BPRE.Multiplayer
 		private readonly DiscoveryBrowser m_browser = new DiscoveryBrowser();
 
 		private string m_instanceId = string.Empty;
+
+		private string m_password = string.Empty;
+
+		private string m_joinPassword = string.Empty;
+
+		private readonly HashSet<string> m_bannedIps = new HashSet<string>();
+
+		private readonly HashSet<string> m_bannedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+		private sealed class PendingAuth
+		{
+			public string Name;
+
+			public string Nonce;
+		}
+
+		private readonly Dictionary<NetConnection, PendingAuth> m_pendingAuth = new Dictionary<NetConnection, PendingAuth>();
 
 		private float m_nextAnnouncementUpdate;
 
@@ -268,7 +287,36 @@ namespace BPRE.Multiplayer
 		// Public API
 		// ------------------------------------------------------------------
 
+		/// <summary>Name shown in the server list and to joined players.</summary>
+		public string ServerName { get; private set; } = string.Empty;
+
+		/// <summary>Set when the last join attempt failed because a (correct) password is required; the UI then asks for it.</summary>
+		public string NeedsPasswordFor { get; set; }
+
+		/// <summary>Host: true when joining requires the password.</summary>
+		public bool HasPassword => !string.IsNullOrEmpty(m_password);
+
+		/// <summary>Last server name the host used (remembered between sessions).</summary>
+		public string PreferredServerName
+		{
+			get
+			{
+				string name = NetProtocol.SanitizeServerName(PlayerPrefs.GetString(PrefServerNameKey, string.Empty));
+				return string.IsNullOrEmpty(name) ? NetProtocol.SanitizeServerName(PlayerName + "'s game") : name;
+			}
+			set
+			{
+				PlayerPrefs.SetString(PrefServerNameKey, NetProtocol.SanitizeServerName(value));
+				PlayerPrefs.Save();
+			}
+		}
+
 		public bool Host(int port)
+		{
+			return Host(port, PreferredServerName, null);
+		}
+
+		public bool Host(int port, string serverName, string password)
 		{
 			LastError = null;
 			Leave();
@@ -276,6 +324,16 @@ namespace BPRE.Multiplayer
 			{
 				LastError = "Invalid port " + port;
 				return false;
+			}
+			serverName = NetProtocol.SanitizeServerName(serverName);
+			if (string.IsNullOrEmpty(serverName))
+			{
+				serverName = NetProtocol.SanitizeServerName(PlayerName + "'s game");
+			}
+			password = password ?? string.Empty;
+			if (password.Length > NetProtocol.MaxPasswordLength)
+			{
+				password = password.Substring(0, NetProtocol.MaxPasswordLength);
 			}
 			NetServer server = new NetServer();
 			try
@@ -292,6 +350,12 @@ namespace BPRE.Multiplayer
 			HostPort = port;
 			LastHostPort = port;
 			m_instanceId = Guid.NewGuid().ToString("N");
+			ServerName = serverName;
+			PreferredServerName = serverName;
+			m_password = password;
+			m_bannedIps.Clear();
+			m_bannedNames.Clear();
+			m_pendingAuth.Clear();
 			m_nextPlayerId = HostPlayerId + 1;
 			LocalPlayer = new MultiplayerPlayer
 			{
@@ -304,8 +368,8 @@ namespace BPRE.Multiplayer
 			m_players.Add(LocalPlayer);
 			State = SessionState.Hosting;
 			List<string> addresses = NetServer.GetLocalAddresses();
-			string hint = addresses.Count > 0 ? " Your LAN address: " + string.Join(", ", addresses) : string.Empty;
-			AddSystemChat("Hosting on port " + port + "." + hint);
+			string hint = addresses.Count > 0 ? " Your addresses: " + string.Join(", ", addresses) : string.Empty;
+			AddSystemChat("Hosting \"" + serverName + "\" on port " + port + (HasPassword ? " (password protected)." : ".") + hint);
 			ActivateMode(PreferredModeId, announce: false);
 			RefreshLocalLocation();
 			SetBrowsing(false);
@@ -356,7 +420,8 @@ namespace BPRE.Multiplayer
 			return new HostAnnouncement
 			{
 				InstanceId = m_instanceId,
-				HostName = PlayerName,
+				HostName = ServerName,
+				HasPassword = HasPassword,
 				TcpPort = HostPort,
 				Players = m_players.Count,
 				MaxPlayers = NetProtocol.MaxPlayers,
@@ -368,8 +433,15 @@ namespace BPRE.Multiplayer
 
 		public bool Join(string address)
 		{
+			return Join(address, null);
+		}
+
+		public bool Join(string address, string password)
+		{
 			LastError = null;
 			Leave();
+			m_joinPassword = password ?? string.Empty;
+			ServerName = string.Empty;
 			if (!TryParseAddress(address, out string host, out int port))
 			{
 				LastError = "Invalid address. Use host or host:port";
@@ -419,6 +491,8 @@ namespace BPRE.Multiplayer
 			}
 			m_hostConnection = null;
 			m_unidentified.Clear();
+			m_pendingAuth.Clear();
+			m_password = string.Empty;
 			foreach (MultiplayerPlayer player in m_players)
 			{
 				player.Connection = null;
@@ -549,11 +623,11 @@ namespace BPRE.Multiplayer
 				switch (State)
 				{
 				case SessionState.Hosting:
-					return "Hosting on port " + HostPort + " (" + m_players.Count + " player" + (m_players.Count == 1 ? "" : "s") + ")";
+					return ServerName + "  -  " + m_players.Count + " player" + (m_players.Count == 1 ? "" : "s") + (HasPassword ? "  -  password" : string.Empty);
 				case SessionState.Connecting:
 					return "Connecting to " + ConnectedAddress + " ...";
 				case SessionState.Connected:
-					return "Connected to " + ConnectedAddress + " (" + m_players.Count + " player" + (m_players.Count == 1 ? "" : "s") + ")";
+					return ServerName + "  -  " + m_players.Count + " player" + (m_players.Count == 1 ? "" : "s");
 				default:
 					return "Offline";
 				}
@@ -644,11 +718,13 @@ namespace BPRE.Multiplayer
 				if (connection.IsClosed)
 				{
 					m_unidentified.RemoveAt(i);
+					m_pendingAuth.Remove(connection);
 					m_server.Remove(connection, connection.CloseReason);
 				}
 				else if (now - connection.LastActivityTime > HandshakeTimeout)
 				{
 					m_unidentified.RemoveAt(i);
+					m_pendingAuth.Remove(connection);
 					m_server.Remove(connection, "handshake timeout");
 				}
 			}
@@ -773,9 +849,15 @@ namespace BPRE.Multiplayer
 			switch (reader.Type)
 			{
 			case NetMessageType.Hello:
-				if (sender == null)
+				if (sender == null && !m_pendingAuth.ContainsKey(connection))
 				{
 					HandleHello(connection, reader);
+				}
+				break;
+			case NetMessageType.AuthResponse:
+				if (sender == null)
+				{
+					HandleAuthResponse(connection, reader);
 				}
 				break;
 			case NetMessageType.Pong:
@@ -867,18 +949,103 @@ namespace BPRE.Multiplayer
 			string name = NetProtocol.SanitizeName(reader.ReadString());
 			if (version != NetProtocol.ProtocolVersion)
 			{
-				Reject(connection, "Version mismatch (host v" + NetProtocol.ProtocolVersion + ", you v" + version + ")");
+				Reject(connection, "Different game version (host v" + NetProtocol.ProtocolVersion + ", you v" + version + "). Please update.");
 				return;
 			}
 			if (m_players.Count >= NetProtocol.MaxPlayers)
 			{
-				Reject(connection, "Server is full");
+				Reject(connection, "This game is full.");
 				return;
 			}
 			if (string.IsNullOrEmpty(name))
 			{
 				name = "Player";
 			}
+			if (m_bannedIps.Contains(connection.RemoteIp) || m_bannedNames.Contains(name))
+			{
+				Reject(connection, "You are banned from this game.");
+				return;
+			}
+			if (HasPassword)
+			{
+				// Ask for proof of the password instead of having it sent in plain text.
+				string nonce = Guid.NewGuid().ToString("N");
+				m_pendingAuth[connection] = new PendingAuth { Name = name, Nonce = nonce };
+				using (NetWriter writer = new NetWriter(NetMessageType.AuthChallenge))
+				{
+					writer.Write(nonce);
+					connection.Send(writer.ToArray());
+				}
+				return;
+			}
+			AcceptPlayer(connection, name);
+		}
+
+		private void HandleAuthResponse(NetConnection connection, NetReader reader)
+		{
+			if (!m_pendingAuth.TryGetValue(connection, out PendingAuth pending))
+			{
+				return;
+			}
+			m_pendingAuth.Remove(connection);
+			string proof = reader.ReadString();
+			if (!string.Equals(proof, NetProtocol.PasswordProof(pending.Nonce, m_password), StringComparison.Ordinal))
+			{
+				AddSystemChat(pending.Name + " tried to join with a wrong password.");
+				Reject(connection, "Wrong password.");
+				return;
+			}
+			if (m_players.Count >= NetProtocol.MaxPlayers)
+			{
+				Reject(connection, "This game is full.");
+				return;
+			}
+			AcceptPlayer(connection, pending.Name);
+		}
+
+		/// <summary>Host: removes a player. With <paramref name="ban"/> the player cannot rejoin this session (by address and name).</summary>
+		public void KickPlayer(int playerId, bool ban)
+		{
+			if (!IsHost)
+			{
+				return;
+			}
+			MultiplayerPlayer player = GetPlayer(playerId);
+			if (player == null || player.IsLocal)
+			{
+				return;
+			}
+			if (ban)
+			{
+				if (player.Connection != null && player.Connection.RemoteIp != "?")
+				{
+					m_bannedIps.Add(player.Connection.RemoteIp);
+				}
+				m_bannedNames.Add(player.Name);
+			}
+			NetConnection connection = player.Connection;
+			if (connection != null)
+			{
+				using (NetWriter writer = new NetWriter(NetMessageType.Reject))
+				{
+					writer.Write(ban ? "You were banned from this game by the host." : "You were removed from this game by the host.");
+					connection.Send(writer.ToArray());
+				}
+			}
+			RemovePlayer(player, ban ? "banned" : "kicked", closeLater: true);
+		}
+
+		public int BannedCount => m_bannedNames.Count;
+
+		/// <summary>Host: lifts all bans of this session.</summary>
+		public void ClearBans()
+		{
+			m_bannedIps.Clear();
+			m_bannedNames.Clear();
+		}
+
+		private void AcceptPlayer(NetConnection connection, string name)
+		{
 			name = MakeUniqueName(name);
 			MultiplayerPlayer player = new MultiplayerPlayer
 			{
@@ -890,7 +1057,7 @@ namespace BPRE.Multiplayer
 			m_players.Add(player);
 			using (NetWriter writer = new NetWriter(NetMessageType.Welcome))
 			{
-				writer.Write(player.Id).Write(HostPlayerId);
+				writer.Write(player.Id).Write(HostPlayerId).Write(ServerName);
 				connection.Send(writer.ToArray());
 			}
 			connection.Send(BuildPlayerList());
@@ -937,7 +1104,7 @@ namespace BPRE.Multiplayer
 			m_server?.Remove(connection, reason);
 		}
 
-		private void RemovePlayer(MultiplayerPlayer player, string reason)
+		private void RemovePlayer(MultiplayerPlayer player, string reason, bool closeLater = false)
 		{
 			if (!m_players.Remove(player))
 			{
@@ -945,7 +1112,15 @@ namespace BPRE.Multiplayer
 			}
 			if (m_server != null && player.Connection != null)
 			{
-				m_server.Remove(player.Connection, reason);
+				if (closeLater)
+				{
+					// Let the reason message reach the player before the socket closes.
+					StartCoroutine(CloseLater(player.Connection, reason));
+				}
+				else
+				{
+					m_server.Remove(player.Connection, reason);
+				}
 			}
 			player.Connection = null;
 			using (NetWriter writer = new NetWriter(NetMessageType.PlayerLeft))
@@ -991,10 +1166,32 @@ namespace BPRE.Multiplayer
 		{
 			switch (reader.Type)
 			{
+			case NetMessageType.AuthChallenge:
+			{
+				string nonce = reader.ReadString();
+				if (State != SessionState.Connecting)
+				{
+					break;
+				}
+				if (string.IsNullOrEmpty(m_joinPassword))
+				{
+					LastError = "This game needs a password.";
+					NeedsPasswordFor = ConnectedAddress;
+					Leave();
+					break;
+				}
+				using (NetWriter writer = new NetWriter(NetMessageType.AuthResponse))
+				{
+					writer.Write(NetProtocol.PasswordProof(nonce, m_joinPassword));
+					m_hostConnection?.Send(writer.ToArray());
+				}
+				break;
+			}
 			case NetMessageType.Welcome:
 			{
 				int myId = reader.ReadInt();
 				reader.ReadInt();
+				string serverName = NetProtocol.SanitizeServerName(reader.ReadString());
 				if (State != SessionState.Connecting || LocalPlayer == null)
 				{
 					break;
@@ -1004,15 +1201,21 @@ namespace BPRE.Multiplayer
 				{
 					m_players.Add(LocalPlayer);
 				}
+				ServerName = serverName;
+				NeedsPasswordFor = null;
 				State = SessionState.Connected;
 				LastJoinAddress = ConnectedAddress;
-				AddSystemChat("Connected. Waiting for the host to pick a level.");
+				AddSystemChat("Joined \"" + serverName + "\". Waiting for the host to pick a level.");
 				RefreshLocalLocation();
 				SessionStarted?.Invoke();
 				break;
 			}
 			case NetMessageType.Reject:
-				LastError = "Rejected by host: " + reader.ReadString();
+				LastError = reader.ReadString();
+				if (LastError == "Wrong password.")
+				{
+					NeedsPasswordFor = ConnectedAddress;
+				}
 				Leave();
 				break;
 			case NetMessageType.PlayerList:

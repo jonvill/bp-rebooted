@@ -8,7 +8,7 @@ namespace BPRE.Multiplayer
 	/// </summary>
 	public static class MultiplayerCommands
 	{
-		private const string Usage = "host [port] | join <address[:port]> | leave | mode <freeplay|distance|ctf|battle> | name <name> | say <text> | status | ui";
+		private const string Usage = "host [port] [password] | join <address[:port]> [password] | kick <name> | ban <name> | leave | mode <freeplay|distance|ctf|battle> | name <name> | say <text> | status | ui";
 
 		private static bool s_registered;
 
@@ -30,7 +30,7 @@ namespace BPRE.Multiplayer
 			}
 			try
 			{
-				handler.RegisterCommand("mp", "Multiplayer: host, join, leave, mode, name, say, status, ui", new[]
+				handler.RegisterCommand("mp", "Multiplayer: host, join, kick, ban, leave, mode, name, say, status, ui", new[]
 				{
 					new RECommandArgDef("Action", "String", Usage),
 					new RECommandArgDef("Value", "String", "Argument for the action (optional)")
@@ -62,7 +62,7 @@ namespace BPRE.Multiplayer
 					Console.WriteLine("Invalid port: " + args.GetString(1));
 					return;
 				}
-				Console.WriteLine(session.Host(port) ? session.StatusText : session.LastError);
+				Console.WriteLine(session.Host(port, session.PreferredServerName, args.HasValue(2) ? args.GetString(2) : null) ? session.StatusText : session.LastError);
 				break;
 			}
 			case "join":
@@ -72,7 +72,33 @@ namespace BPRE.Multiplayer
 					Console.WriteLine("Usage: mp join <address[:port]>");
 					return;
 				}
-				Console.WriteLine(session.Join(args.GetString(1)) ? session.StatusText : session.LastError);
+				Console.WriteLine(session.Join(args.GetString(1), args.HasValue(2) ? args.GetString(2) : null) ? session.StatusText : session.LastError);
+				break;
+			}
+			case "kick":
+			case "ban":
+			{
+				string target = JoinRest(args, 1);
+				if (!session.IsHost)
+				{
+					Console.WriteLine("Only the host can kick or ban players.");
+					return;
+				}
+				MultiplayerPlayer found = null;
+				foreach (MultiplayerPlayer player in session.Players)
+				{
+					if (!player.IsLocal && string.Equals(player.Name, target, StringComparison.OrdinalIgnoreCase))
+					{
+						found = player;
+					}
+				}
+				if (found == null)
+				{
+					Console.WriteLine("No player named '" + target + "'.");
+					return;
+				}
+				session.KickPlayer(found.Id, action == "ban");
+				Console.WriteLine((action == "ban" ? "Banned " : "Kicked ") + found.Name + ".");
 				break;
 			}
 			case "leave":

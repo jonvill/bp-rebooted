@@ -33,8 +33,8 @@ namespace BPRE.Multiplayer
 		public override string DisplayName => "Distance";
 
 		public override string Description => CurrentMetric == Metric.Height
-			? "Who gets their pig the highest above the start? Best attempt within the round counts."
-			: "Who gets their pig the furthest from the start? Best attempt within the round counts.";
+			? "Highest pig wins. Best attempt counts."
+			: "Furthest pig wins. Best attempt counts.";
 
 		protected override string FormatScore(float score)
 		{

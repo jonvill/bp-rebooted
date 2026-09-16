@@ -54,8 +54,6 @@ namespace BPRE.Multiplayer
 
 		private Vector2 m_chatScroll;
 
-		private Vector2 m_playerScroll;
-
 		private Vector2 m_bodyScroll;
 
 		private string m_nameField = string.Empty;
@@ -66,13 +64,32 @@ namespace BPRE.Multiplayer
 
 		private string m_chatField = string.Empty;
 
-		private string m_vehicleMessage = string.Empty;
+		private enum Popup
+		{
+			None,
+			Address,
+			Password
+		}
+
+		private bool m_hostTab;
+
+		private bool m_showAdvanced;
+
+		private string m_serverNameField = string.Empty;
+
+		private string m_hostPasswordField = string.Empty;
+
+		private string m_joinPasswordField = string.Empty;
+
+		private Popup m_popup;
+
+		private string m_popupTarget = string.Empty;
+
+		private string m_popupTitle = string.Empty;
 
 		private readonly Dictionary<KeyCode, int> m_lastHotkeyFrame = new Dictionary<KeyCode, int>();
 
 		private Vector2 m_serverListScroll;
-
-		private Vector2 m_offlineScroll;
 
 		private GameObject m_blockerRoot;
 
@@ -105,6 +122,7 @@ namespace BPRE.Multiplayer
 				m_nameField = m_session.PlayerName;
 				m_portField = m_session.LastHostPort.ToString();
 				m_addressField = m_session.LastJoinAddress;
+				m_serverNameField = m_session.PreferredServerName;
 			}
 		}
 
@@ -180,6 +198,14 @@ namespace BPRE.Multiplayer
 			{
 				HandleHotkey(KeyCode.F6);
 			}
+			if (Input.GetKeyDown(KeyCode.F5))
+			{
+				HandleHotkey(KeyCode.F5);
+			}
+			if (Input.GetKeyDown(KeyCode.F4))
+			{
+				HandleHotkey(KeyCode.F4);
+			}
 			UpdateInputBlocker();
 			// Search for LAN games only while someone looks at the join list.
 			if (m_session != null)
@@ -205,6 +231,12 @@ namespace BPRE.Multiplayer
 				Toggle();
 				return;
 			}
+			// Rainbow rocket car works in every level, with or without multiplayer.
+			if (key == KeyCode.F5 || key == KeyCode.F4)
+			{
+				HandleRainbowHotkey(key);
+				return;
+			}
 			// Starter car shortcuts only while in a session and inside a level.
 			if (m_session == null || !m_session.IsActive || m_session.LocalPlayer == null || !m_session.LocalPlayer.InLevel)
 			{
@@ -228,6 +260,39 @@ namespace BPRE.Multiplayer
 			case KeyCode.F6:
 				QuickVehicle.ToggleReverse();
 				break;
+			}
+		}
+
+		private void HandleRainbowHotkey(KeyCode key)
+		{
+			LevelManager levelManager = WPFMonoBehaviour.levelManager;
+			if (levelManager == null || levelManager.ConstructionUI == null)
+			{
+				return;
+			}
+			if (key == KeyCode.F4)
+			{
+				QuickVehicle.FireRockets();
+				return;
+			}
+			if (levelManager.gameState != LevelManager.GameState.Building)
+			{
+				// Second press: back to building, so F5 always gives a fresh car.
+				QuickVehicle.Stop();
+				return;
+			}
+			bool built = QuickVehicle.BuildRainbow(out string error);
+			if (built)
+			{
+				QuickVehicle.StartAndDrive(this);
+			}
+			if (m_session != null && m_session.IsActive)
+			{
+				m_session.AddSystemChat(built ? "Rainbow rocket car! F4 fires the rockets, F5 again to rebuild." : error);
+			}
+			else if (!built)
+			{
+				Debug.LogWarning("[RainbowRocket] " + error);
 			}
 		}
 
@@ -283,7 +348,7 @@ namespace BPRE.Multiplayer
 			if (keyEvent.type == UnityEngine.EventType.KeyDown)
 			{
 				KeyCode code = keyEvent.keyCode;
-				if (code == ToggleKey || code == KeyCode.F6 || code == KeyCode.F7 || code == KeyCode.F8)
+				if (code == ToggleKey || code == KeyCode.F4 || code == KeyCode.F5 || code == KeyCode.F6 || code == KeyCode.F7 || code == KeyCode.F8)
 				{
 					HandleHotkey(code);
 					keyEvent.Use();
@@ -304,8 +369,8 @@ namespace BPRE.Multiplayer
 			DrawHud();
 			if (IsOpen)
 			{
-				float width = Mathf.Min(Screen.width - 16f, 480f * Scale);
-				float height = Mathf.Min(Screen.height - 16f, 600f * Scale);
+				float width = Mathf.Min(Screen.width - 16f, 440f * Scale);
+				float height = Mathf.Min(Screen.height - 16f, (m_session.IsActive ? 560f : 440f) * Scale);
 				if (m_windowRect.width <= 0f)
 				{
 					m_windowRect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
@@ -465,25 +530,31 @@ namespace BPRE.Multiplayer
 
 		private void DrawWindow(int id)
 		{
-			GUILayout.BeginVertical();
-			switch (m_session.State)
-			{
-			case MultiplayerSession.SessionState.Offline:
-				m_offlineScroll = GUILayout.BeginScrollView(m_offlineScroll, GUILayout.ExpandHeight(true));
-				DrawOffline();
-				GUILayout.EndScrollView();
-				break;
-			case MultiplayerSession.SessionState.Connecting:
-				DrawConnecting();
-				break;
-			default:
-				DrawActive();
-				break;
-			}
-			GUILayout.FlexibleSpace();
-			if (GUILayout.Button("Close (" + ToggleKey + ")", ButtonStyle))
+			// Small close button in the title bar instead of a big one at the bottom.
+			float closeSize = 22f * Scale;
+			if (GUI.Button(new Rect(m_windowRect.width - closeSize - 4f * Scale, 2f * Scale, closeSize, closeSize), "X", ButtonStyle))
 			{
 				SetOpen(false);
+			}
+			GUILayout.BeginVertical();
+			if (m_popup != Popup.None && m_session.State == MultiplayerSession.SessionState.Offline)
+			{
+				DrawPopup();
+			}
+			else
+			{
+				switch (m_session.State)
+				{
+				case MultiplayerSession.SessionState.Offline:
+					DrawOffline();
+					break;
+				case MultiplayerSession.SessionState.Connecting:
+					DrawConnecting();
+					break;
+				default:
+					DrawActive();
+					break;
+				}
 			}
 			GUILayout.EndVertical();
 			GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f * Scale));
@@ -491,87 +562,195 @@ namespace BPRE.Multiplayer
 
 		private void DrawOffline()
 		{
-			GUILayout.Label("Your name", Bold);
-			m_nameField = GUILayout.TextField(m_nameField, NetProtocol.MaxNameLength, TextField);
-			GUILayout.Space(8f * Scale);
-
-			GUILayout.BeginVertical(Box);
-			GUILayout.Label("Host a game", Bold);
-			GUILayout.BeginHorizontal();
-			GUILayout.Label("Port", Label, GUILayout.Width(50f * Scale));
-			m_portField = GUILayout.TextField(m_portField, 5, TextField, GUILayout.Width(90f * Scale));
-			GUILayout.FlexibleSpace();
-			if (GUILayout.Button("Host", ButtonStyle, GUILayout.Width(120f * Scale)))
+			// A wrong or missing password sends us back offline; ask for it right away.
+			if (!string.IsNullOrEmpty(m_session.NeedsPasswordFor))
 			{
-				ApplyName();
-				if (!int.TryParse(m_portField, out int port))
-				{
-					port = NetProtocol.DefaultPort;
-				}
-				m_session.Host(port);
+				OpenPasswordPopup(m_session.NeedsPasswordFor, m_session.NeedsPasswordFor);
+				m_session.NeedsPasswordFor = null;
+				return;
+			}
+
+			GUILayout.BeginHorizontal();
+			GUILayout.Label("Name", Label, GUILayout.Width(60f * Scale));
+			m_nameField = GUILayout.TextField(m_nameField, NetProtocol.MaxNameLength, TextField);
+			GUILayout.Space(26f * Scale);
+			GUILayout.EndHorizontal();
+			GUILayout.Space(6f * Scale);
+
+			GUILayout.BeginHorizontal();
+			if (GUILayout.Button("Join", !m_hostTab ? m_modeButtonActive : ButtonStyle))
+			{
+				m_hostTab = false;
+			}
+			if (GUILayout.Button("Host", m_hostTab ? m_modeButtonActive : ButtonStyle))
+			{
+				m_hostTab = true;
 			}
 			GUILayout.EndHorizontal();
-			GUILayout.Label("Game mode", Label);
-			DrawModeSelector();
-			GUILayout.EndVertical();
-			GUILayout.Space(8f * Scale);
+			GUILayout.Space(4f * Scale);
 
-			GUILayout.BeginVertical(Box);
-			GUILayout.Label("Join a game", Bold);
-			GUILayout.Label("Games on your network", Label);
+			if (m_hostTab)
+			{
+				DrawHostTab();
+			}
+			else
+			{
+				DrawJoinTab();
+			}
+
+			if (!string.IsNullOrEmpty(m_session.LastError))
+			{
+				GUILayout.Label(m_session.LastError, Error);
+			}
+		}
+
+		private void DrawJoinTab()
+		{
 			List<DiscoveredHost> hosts = m_session.DiscoveredHosts;
+			m_serverListScroll = GUILayout.BeginScrollView(m_serverListScroll, Box, GUILayout.ExpandHeight(true));
 			if (hosts.Count == 0)
 			{
-				string searching = m_session.IsBrowsing ? "Searching" + new string('.', 1 + (int)(Time.realtimeSinceStartup * 2f) % 3) : "Search not running";
+				string searching = "Looking for games" + new string('.', 1 + (int)(Time.realtimeSinceStartup * 2f) % 3);
 				if (!string.IsNullOrEmpty(m_session.DiscoveryError))
 				{
 					searching = "Search unavailable: " + m_session.DiscoveryError;
 				}
 				GUILayout.Label(searching, SystemChat);
 			}
-			else
+			foreach (DiscoveredHost host in hosts)
 			{
-				m_serverListScroll = GUILayout.BeginScrollView(m_serverListScroll, GUILayout.Height(Mathf.Min(hosts.Count, 4) * 30f * Scale + 6f));
-				foreach (DiscoveredHost host in hosts)
+				HostAnnouncement info = host.Info;
+				bool full = info.Players >= info.MaxPlayers;
+				GUILayout.BeginHorizontal(Box);
+				GUILayout.BeginVertical();
+				GUILayout.Label((info.HasPassword ? "[locked] " : string.Empty) + info.HostName, Bold);
+				GUILayout.Label(MultiplayerGameMode.GetDisplayName(info.Mode) + "  -  " + info.Players + "/" + info.MaxPlayers + " players" + (host.IsVpn ? "  -  VPN" : string.Empty), Label);
+				GUILayout.EndVertical();
+				GUI.enabled = !full;
+				if (GUILayout.Button(full ? "Full" : "Join", ButtonStyle, GUILayout.Width(80f * Scale), GUILayout.Height(40f * Scale)))
 				{
-					HostAnnouncement info = host.Info;
-					bool full = info.Players >= info.MaxPlayers;
-					GUILayout.BeginHorizontal();
-					string line = info.HostName + "  -  " + MultiplayerGameMode.GetDisplayName(info.Mode) + "  -  " + info.Players + "/" + info.MaxPlayers + "  -  " + info.Level + "  (" + host.PingMs + " ms)";
-					GUILayout.Label(line, Label);
-					GUI.enabled = !full;
-					if (GUILayout.Button(full ? "Full" : "Join", ButtonStyle, GUILayout.Width(80f * Scale)))
+					ApplyName();
+					m_addressField = host.Address;
+					if (info.HasPassword)
 					{
-						ApplyName();
-						m_addressField = host.Address;
+						OpenPasswordPopup(host.Address, info.HostName);
+					}
+					else
+					{
 						m_session.Join(host.Address);
 					}
-					GUI.enabled = true;
-					GUILayout.EndHorizontal();
 				}
-				GUILayout.EndScrollView();
+				GUI.enabled = true;
+				GUILayout.EndHorizontal();
 			}
-			GUILayout.Space(4f * Scale);
-			GUILayout.Label("Or enter an address (e.g. Tailscale or internet)", Label);
+			GUILayout.EndScrollView();
 			GUILayout.BeginHorizontal();
-			GUILayout.Label("Address", Label, GUILayout.Width(70f * Scale));
-			m_addressField = GUILayout.TextField(m_addressField, 64, TextField);
-			if (GUILayout.Button("Join", ButtonStyle, GUILayout.Width(120f * Scale)))
+			GUILayout.FlexibleSpace();
+			if (GUILayout.Button("Join by address...", ButtonStyle))
 			{
-				ApplyName();
-				m_session.Join(m_addressField);
+				m_joinPasswordField = string.Empty;
+				m_popup = Popup.Address;
 			}
 			GUILayout.EndHorizontal();
-			GUILayout.EndVertical();
-			GUILayout.Space(8f * Scale);
+		}
 
+		private void DrawHostTab()
+		{
+			GUILayout.BeginHorizontal();
+			GUILayout.Label("Server", Label, GUILayout.Width(90f * Scale));
+			m_serverNameField = GUILayout.TextField(m_serverNameField, NetProtocol.MaxServerNameLength, TextField);
+			GUILayout.EndHorizontal();
+			GUILayout.BeginHorizontal();
+			GUILayout.Label("Password", Label, GUILayout.Width(90f * Scale));
+			m_hostPasswordField = GUILayout.PasswordField(m_hostPasswordField, '*', NetProtocol.MaxPasswordLength, TextField);
+			GUILayout.EndHorizontal();
+			GUILayout.Label(string.IsNullOrEmpty(m_hostPasswordField) ? "No password: anyone can join." : "Only players with the password can join.", SystemChat);
+			GUILayout.Space(4f * Scale);
+			DrawModeSelector();
+			GUILayout.Space(4f * Scale);
+			m_showAdvanced = GUILayout.Toggle(m_showAdvanced, "Advanced", ToggleStyle);
+			if (m_showAdvanced)
+			{
+				GUILayout.BeginHorizontal();
+				GUILayout.Label("Port", Label, GUILayout.Width(90f * Scale));
+				m_portField = GUILayout.TextField(m_portField, 5, TextField, GUILayout.Width(90f * Scale));
+				GUILayout.FlexibleSpace();
+				GUILayout.EndHorizontal();
+			}
+			GUILayout.FlexibleSpace();
+			if (GUILayout.Button("Start server", m_modeButtonActive, GUILayout.Height(36f * Scale)))
+			{
+				ApplyName();
+				if (!int.TryParse(m_portField, out int port))
+				{
+					port = NetProtocol.DefaultPort;
+				}
+				m_session.PreferredServerName = m_serverNameField;
+				m_session.Host(port, m_serverNameField, m_hostPasswordField);
+			}
+		}
+
+		private void OpenPasswordPopup(string address, string title)
+		{
+			// After a wrong password the session only knows the address; keep the server name we showed.
+			if (address != m_popupTarget || string.IsNullOrEmpty(m_popupTitle))
+			{
+				m_popupTitle = title;
+			}
+			m_popupTarget = address;
+			m_joinPasswordField = string.Empty;
+			m_popup = Popup.Password;
+		}
+
+		private void DrawPopup()
+		{
+			bool submit = false;
+			UnityEngine.Event current = UnityEngine.Event.current;
+			if (current.type == UnityEngine.EventType.KeyDown && (current.keyCode == KeyCode.Return || current.keyCode == KeyCode.KeypadEnter))
+			{
+				submit = true;
+				current.Use();
+			}
+			GUILayout.BeginVertical(Box);
+			if (m_popup == Popup.Address)
+			{
+				GUILayout.Label("Join by address", Bold);
+				GUILayout.BeginHorizontal();
+				GUILayout.Label("Address", Label, GUILayout.Width(90f * Scale));
+				m_addressField = GUILayout.TextField(m_addressField, 64, TextField);
+				GUILayout.EndHorizontal();
+			}
+			else
+			{
+				GUILayout.Label("Password for " + m_popupTitle, Bold);
+			}
+			GUILayout.BeginHorizontal();
+			GUILayout.Label("Password", Label, GUILayout.Width(90f * Scale));
+			m_joinPasswordField = GUILayout.PasswordField(m_joinPasswordField, '*', NetProtocol.MaxPasswordLength, TextField);
+			GUILayout.EndHorizontal();
 			if (!string.IsNullOrEmpty(m_session.LastError))
 			{
 				GUILayout.Label(m_session.LastError, Error);
 			}
-			GUILayout.Label("The host plays as usual and picks any level; everyone in the session follows automatically. " +
-				"Each player builds and drives their own contraption; the others appear as ghosts.", Label);
-			GUILayout.Label("Console: mp host [port], mp join <address>, mp leave, mp mode <name>, mp say <text>", Label);
+			GUILayout.BeginHorizontal();
+			if (GUILayout.Button("Cancel", ButtonStyle))
+			{
+				m_popup = Popup.None;
+				submit = false;
+			}
+			if (GUILayout.Button("Join", m_modeButtonActive))
+			{
+				submit = true;
+			}
+			GUILayout.EndHorizontal();
+			GUILayout.EndVertical();
+			if (submit && m_popup != Popup.None)
+			{
+				string address = m_popup == Popup.Address ? m_addressField : m_popupTarget;
+				ApplyName();
+				m_popup = Popup.None;
+				m_session.Join(address, m_joinPasswordField);
+			}
 		}
 
 		private void DrawModeSelector()
@@ -601,24 +780,27 @@ namespace BPRE.Multiplayer
 		private void DrawActive()
 		{
 			GUILayout.BeginHorizontal();
-			GUILayout.Label(m_session.StatusText, Bold);
-			if (GUILayout.Button("Leave", ButtonStyle, GUILayout.Width(100f * Scale)))
+			GUILayout.Label((m_session.HasPassword ? "[locked] " : string.Empty) + m_session.ServerName + "  -  " + m_session.Players.Count + "/" + NetProtocol.MaxPlayers, Bold);
+			if (GUILayout.Button("Leave", ButtonStyle, GUILayout.Width(80f * Scale)))
 			{
 				m_session.Leave();
 				GUILayout.EndHorizontal();
 				return;
 			}
+			GUILayout.Space(26f * Scale);
 			GUILayout.EndHorizontal();
 
 			m_bodyScroll = GUILayout.BeginScrollView(m_bodyScroll, GUILayout.ExpandHeight(true));
 
 			MultiplayerGameMode mode = m_session.CurrentMode;
 			GUILayout.BeginVertical(Box);
-			GUILayout.Label("Mode: " + (mode != null ? mode.DisplayName : "-"), Bold);
 			if (m_session.IsHost)
 			{
 				DrawModeSelector();
-				GUILayout.Label("Load any level and the others will follow.", Label);
+			}
+			else
+			{
+				GUILayout.Label("Mode: " + (mode != null ? mode.DisplayName : "-"), Bold);
 			}
 			if (mode != null)
 			{
@@ -633,77 +815,50 @@ namespace BPRE.Multiplayer
 			}
 			GUILayout.EndVertical();
 
-			if (m_session.LocalPlayer != null && m_session.LocalPlayer.InLevel)
-			{
-				GUILayout.BeginVertical(Box);
-				GUILayout.Label("Starter car (frame, pig, engine, gearbox, motor wheels)  -  F7 build, F8 start/stop, F6 reverse", Bold);
-				GUILayout.BeginHorizontal();
-				GUI.enabled = QuickVehicle.CanBuild;
-				if (GUILayout.Button("Build car", ButtonStyle))
-				{
-					if (!QuickVehicle.Build(out string error))
-					{
-						m_vehicleMessage = error;
-					}
-					else
-					{
-						m_vehicleMessage = "Car placed. Press Start to drive.";
-					}
-				}
-				GUI.enabled = QuickVehicle.CanBuild || QuickVehicle.IsRunning;
-				if (GUILayout.Button(QuickVehicle.IsRunning ? "Stop" : "Start + drive", ButtonStyle))
-				{
-					if (QuickVehicle.IsRunning)
-					{
-						QuickVehicle.Stop();
-					}
-					else
-					{
-						QuickVehicle.StartAndDrive(this);
-						SetOpen(false);
-					}
-					m_vehicleMessage = string.Empty;
-				}
-				GUI.enabled = QuickVehicle.IsRunning;
-				if (GUILayout.Button("Reverse", ButtonStyle))
-				{
-					QuickVehicle.ToggleReverse();
-					SetOpen(false);
-				}
-				GUI.enabled = true;
-				GUILayout.EndHorizontal();
-				if (!string.IsNullOrEmpty(m_vehicleMessage))
-				{
-					GUILayout.Label(m_vehicleMessage, Label);
-				}
-				GUILayout.EndVertical();
-			}
-
-			GUILayout.Label("Players", Bold);
-			m_playerScroll = GUILayout.BeginScrollView(m_playerScroll, Box, GUILayout.Height(90f * Scale));
+			GUILayout.BeginVertical(Box);
+			MultiplayerPlayer kick = null;
+			bool ban = false;
 			foreach (MultiplayerPlayer player in m_session.Players)
 			{
-				string line = player.Name;
-				if (player.IsHost)
-				{
-					line += " [host]";
-				}
-				if (player.IsLocal)
-				{
-					line += " (you)";
-				}
-				line += "  -  " + player.LocationLabel;
+				GUILayout.BeginHorizontal();
+				string line = player.Name + (player.IsHost ? " (host)" : string.Empty) + (player.IsLocal ? " (you)" : string.Empty) + "  -  " + player.LocationLabel;
 				GUILayout.Label(line, Label);
+				if (m_session.IsHost && !player.IsLocal)
+				{
+					if (GUILayout.Button("Kick", ButtonStyle, GUILayout.Width(56f * Scale)))
+					{
+						kick = player;
+					}
+					if (GUILayout.Button("Ban", ButtonStyle, GUILayout.Width(56f * Scale)))
+					{
+						kick = player;
+						ban = true;
+					}
+				}
+				GUILayout.EndHorizontal();
 			}
-			GUILayout.EndScrollView();
+			if (m_session.IsHost && m_session.BannedCount > 0)
+			{
+				GUILayout.BeginHorizontal();
+				GUILayout.Label(m_session.BannedCount + " banned", SystemChat);
+				if (GUILayout.Button("Unban all", ButtonStyle, GUILayout.Width(110f * Scale)))
+				{
+					m_session.ClearBans();
+				}
+				GUILayout.EndHorizontal();
+			}
+			GUILayout.EndVertical();
+			if (kick != null)
+			{
+				m_session.KickPlayer(kick.Id, ban);
+			}
 
-			GUILayout.Label("Chat", Bold);
 			if (m_seenChatVersion != m_session.ChatVersion)
 			{
 				m_seenChatVersion = m_session.ChatVersion;
 				m_chatScroll.y = float.MaxValue;
 			}
-			m_chatScroll = GUILayout.BeginScrollView(m_chatScroll, Box, GUILayout.Height(140f * Scale));
+			m_chatScroll = GUILayout.BeginScrollView(m_chatScroll, Box, GUILayout.Height(110f * Scale));
 			foreach (MultiplayerSession.ChatLine line in m_session.Chat)
 			{
 				GUILayout.Label(FormatChatLine(line), line.IsSystem ? SystemChat : Label);
@@ -712,8 +867,7 @@ namespace BPRE.Multiplayer
 
 			GUILayout.EndScrollView();
 
-			// The input row stays outside the scroll area so it is always reachable,
-			// however much the selected mode adds to the window.
+			// The input row stays outside the scroll area so it is always reachable.
 			bool submit = false;
 			UnityEngine.Event current = UnityEngine.Event.current;
 			if (current.type == UnityEngine.EventType.KeyDown && (current.keyCode == KeyCode.Return || current.keyCode == KeyCode.KeypadEnter) && GUI.GetNameOfFocusedControl() == ChatControlName)
@@ -724,7 +878,7 @@ namespace BPRE.Multiplayer
 			GUILayout.BeginHorizontal();
 			GUI.SetNextControlName(ChatControlName);
 			m_chatField = GUILayout.TextField(m_chatField, NetProtocol.MaxChatLength, TextField);
-			if (GUILayout.Button("Send", ButtonStyle, GUILayout.Width(80f * Scale)))
+			if (GUILayout.Button("Send", ButtonStyle, GUILayout.Width(70f * Scale)))
 			{
 				submit = true;
 			}
@@ -734,6 +888,10 @@ namespace BPRE.Multiplayer
 				m_session.SendChat(m_chatField);
 				m_chatField = string.Empty;
 				GUI.FocusControl(ChatControlName);
+			}
+			if (m_session.LocalPlayer != null && m_session.LocalPlayer.InLevel)
+			{
+				GUILayout.Label("Starter car: F7 build - F8 start/stop - F6 reverse", SystemChat);
 			}
 		}
 

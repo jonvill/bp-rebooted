@@ -57,7 +57,7 @@ namespace BPRE.Multiplayer
 
 		public override string DisplayName => "Battle";
 
-		public override string Description => "Other contraptions are solid once they leave the start zone. Shoot, blow up or ram them: 1 point per 100 damage, 10 points for destroying a pig.";
+		public override string Description => "Wreck the others: 1 point per 100 damage, 10 per pig.";
 
 		public override void OnEnter()
 		{
@@ -282,7 +282,7 @@ namespace BPRE.Multiplayer
 
 		protected override void DrawModeWindow(MultiplayerUI ui)
 		{
-			GUILayout.Label("Tip: guns, TNT, rockets and ramming all count. Rebuild and press play again after you get wrecked.", ui.Label);
+			GUILayout.Label("Guns, TNT, rockets and ramming count.", ui.Label);
 		}
 
 		protected override void DrawModeHud(MultiplayerUI ui)

@@ -70,7 +70,7 @@ namespace BPRE.Multiplayer
 
 		public override string DisplayName => "Capture the Flag";
 
-		public override string Description => "Grab the flag somewhere in the level and bring it back to the start zone. First to " + CapturesToWin + " captures (or most when time runs out) wins.";
+		public override string Description => "Bring the flag to the start zone. First to " + CapturesToWin + " wins.";
 
 		protected override string FormatScore(float score)
 		{

@@ -27,8 +27,8 @@ namespace BPRE.Multiplayer
 		public override string DisplayName => "Free Play";
 
 		public override string Description => SolidContraptions
-			? "Build and drive together in the same level. Contraptions are solid: you can push and ram each other."
-			: "Build and drive together in the same level. Other players' contraptions are ghosts and pass through each other.";
+			? "Play together. Contraptions can push and ram."
+			: "Play together. Contraptions pass through each other.";
 
 		public bool SolidContraptions => m_solidity.Enabled;
 
@@ -110,20 +110,15 @@ namespace BPRE.Multiplayer
 			GUILayout.Label(Description, ui.Label);
 			if (IsHost)
 			{
-				bool solid = GUILayout.Toggle(SolidContraptions, " Solid contraptions (collisions between players)", ui.ToggleStyle);
+				bool solid = GUILayout.Toggle(SolidContraptions, " Collisions between players", ui.ToggleStyle);
 				if (solid != SolidContraptions)
 				{
 					SetSolid(solid);
 				}
-				GUILayout.Label("Pick any sandbox, race or story level; everybody follows you there.", ui.Label);
 			}
 			else
 			{
 				GUILayout.Label(SolidContraptions ? "Collisions: on" : "Collisions: off (host decides)", ui.Label);
-			}
-			if (SolidContraptions)
-			{
-				GUILayout.Label("Note: each vehicle is simulated by its own player, so a hard crash can look a little different on each screen.", ui.Label);
 			}
 		}
 

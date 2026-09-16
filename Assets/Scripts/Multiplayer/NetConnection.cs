@@ -33,6 +33,9 @@ namespace BPRE.Multiplayer
 
 		public string RemoteAddress { get; }
 
+		/// <summary>Remote IP without port (used for bans).</summary>
+		public string RemoteIp { get; }
+
 		public bool IsClosed => m_closed != 0;
 
 		public string CloseReason => m_closeReason;
@@ -49,10 +52,12 @@ namespace BPRE.Multiplayer
 			{
 				m_client.NoDelay = true;
 				RemoteAddress = m_client.Client.RemoteEndPoint?.ToString() ?? "?";
+				RemoteIp = (m_client.Client.RemoteEndPoint as System.Net.IPEndPoint)?.Address.ToString() ?? "?";
 			}
 			catch
 			{
 				RemoteAddress = "?";
+				RemoteIp = "?";
 			}
 			m_stream = m_client.GetStream();
 			m_receiveThread = new Thread(ReceiveLoop)

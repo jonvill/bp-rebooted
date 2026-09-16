@@ -14,7 +14,10 @@ namespace BPRE.Multiplayer
 	{
 		public string InstanceId;
 
+		/// <summary>Server name chosen by the host.</summary>
 		public string HostName;
+
+		public bool HasPassword;
 
 		public int TcpPort;
 
@@ -39,24 +42,119 @@ namespace BPRE.Multiplayer
 
 		public bool IsLoopback;
 
+		/// <summary>Found through the Tailscale VPN.</summary>
+		public bool IsVpn;
+
 		public float LastSeen;
 
 		public int PingMs;
 	}
 
 	/// <summary>
-	/// LAN discovery over UDP. Clients broadcast a small request; every host that receives it
+	/// Network discovery over UDP. Clients broadcast a small request; every host that receives it
 	/// answers directly to the sender with a description of its session.
-	/// Broadcasts do not cross routers or VPNs such as Tailscale, so the browser additionally
-	/// sends a direct request to the address that was joined last.
+	/// Broadcasts do not cross routers or VPNs such as Tailscale, so the browser additionally asks
+	/// every device of the local Tailscale network directly, plus the address that was joined last.
 	/// </summary>
 	public static class NetDiscovery
 	{
+		/// <summary>
+		/// IPv4 addresses of all devices in the Tailscale network this PC belongs to (including devices
+		/// shared by other users), read from the Tailscale command line tool. Empty if Tailscale is not installed.
+		/// Blocking: call from a background thread.
+		/// </summary>
+		internal static List<IPAddress> GetTailscalePeers()
+		{
+			List<IPAddress> peers = new List<IPAddress>();
+			string exe = FindTailscaleExe();
+			if (exe == null)
+			{
+				return peers;
+			}
+			try
+			{
+				using (System.Diagnostics.Process process = new System.Diagnostics.Process())
+				{
+					process.StartInfo = new System.Diagnostics.ProcessStartInfo
+					{
+						FileName = exe,
+						Arguments = "status --json",
+						UseShellExecute = false,
+						RedirectStandardOutput = true,
+						RedirectStandardError = true,
+						CreateNoWindow = true
+					};
+					process.Start();
+					string json = process.StandardOutput.ReadToEnd();
+					if (!process.WaitForExit(4000))
+					{
+						try
+						{
+							process.Kill();
+						}
+						catch
+						{
+						}
+					}
+					// Every device lists its addresses as "TailscaleIPs": ["100.x.y.z", "fd7a:..."].
+					foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(json, "\"TailscaleIPs\"\\s*:\\s*\\[\\s*\"(\\d+\\.\\d+\\.\\d+\\.\\d+)\""))
+					{
+						if (IPAddress.TryParse(match.Groups[1].Value, out IPAddress ip) && !peers.Contains(ip))
+						{
+							peers.Add(ip);
+						}
+					}
+				}
+			}
+			catch
+			{
+				// Tailscale not running or no permission: just no VPN peers.
+			}
+			return peers;
+		}
+
+		/// <summary>Tailscale uses the carrier-grade NAT range 100.64.0.0/10.</summary>
+		internal static bool IsTailscaleAddress(IPAddress address)
+		{
+			if (address == null || address.AddressFamily != AddressFamily.InterNetwork)
+			{
+				return false;
+			}
+			byte[] b = address.GetAddressBytes();
+			return b[0] == 100 && b[1] >= 64 && b[1] <= 127;
+		}
+
+		private static string FindTailscaleExe()
+		{
+			string[] candidates =
+			{
+				Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\Tailscale\tailscale.exe"),
+				Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Tailscale IPN\tailscale.exe"),
+				"/usr/bin/tailscale",
+				"/usr/local/bin/tailscale",
+				"/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+			};
+			foreach (string candidate in candidates)
+			{
+				try
+				{
+					if (System.IO.File.Exists(candidate))
+					{
+						return candidate;
+					}
+				}
+				catch
+				{
+				}
+			}
+			return null;
+		}
+
 		public const int DiscoveryPort = 7778;
 
 		private const string RequestMagic = "BPRE-DISCOVER-1";
 
-		private const string ResponseMagic = "BPRE-HERE-1";
+		private const string ResponseMagic = "BPRE-HERE-2";
 
 		internal static byte[] BuildRequest(long token)
 		{
@@ -106,7 +204,8 @@ namespace BPRE.Multiplayer
 					.Write(info.MaxPlayers)
 					.Write((byte)info.Mode)
 					.Write(info.Level ?? string.Empty)
-					.Write(info.GameBuild);
+					.Write(info.GameBuild)
+					.Write(info.HasPassword);
 				return writer.ToArray();
 			}
 		}
@@ -129,13 +228,14 @@ namespace BPRE.Multiplayer
 					}
 					token = reader.ReadInt();
 					info.InstanceId = reader.ReadString();
-					info.HostName = NetProtocol.SanitizeName(reader.ReadString());
+					info.HostName = NetProtocol.SanitizeServerName(reader.ReadString());
 					info.TcpPort = reader.ReadInt();
 					info.Players = reader.ReadInt();
 					info.MaxPlayers = reader.ReadInt();
 					info.Mode = (MultiplayerModeId)reader.ReadByte();
 					info.Level = reader.ReadString();
 					info.GameBuild = reader.ReadInt();
+					info.HasPassword = reader.ReadBool();
 					return info.TcpPort > 0 && info.TcpPort <= 65535 && !string.IsNullOrEmpty(info.InstanceId);
 				}
 			}
@@ -315,6 +415,17 @@ namespace BPRE.Multiplayer
 
 		private int m_token;
 
+		private const float VpnRefreshInterval = 20f;
+
+		private volatile List<IPAddress> m_vpnPeers = new List<IPAddress>();
+
+		private volatile bool m_vpnRefreshRunning;
+
+		private float m_nextVpnRefresh;
+
+		/// <summary>Number of Tailscale devices that are searched directly.</summary>
+		public int VpnPeerCount => m_vpnPeers.Count;
+
 		/// <summary>Extra host names or IPs to ask directly (e.g. the last joined address, for VPNs without broadcast).</summary>
 		public List<string> DirectTargets { get; } = new List<string>();
 
@@ -352,6 +463,7 @@ namespace BPRE.Multiplayer
 			Error = null;
 			m_running = true;
 			m_nextProbe = 0f;
+			m_nextVpnRefresh = 0f;
 			m_thread = new Thread(Loop) { IsBackground = true, Name = "BPRE.Net.DiscoveryBrowser" };
 			m_thread.Start();
 		}
@@ -398,11 +510,13 @@ namespace BPRE.Multiplayer
 					host = new DiscoveredHost();
 					m_hosts[info.InstanceId] = host;
 				}
-				// Prefer a real network address over loopback: it works from other machines as well.
-				if (host.Address == null || (host.IsLoopback && !loopback))
+				// Prefer a real network address over loopback, and a local network over the VPN (lower latency).
+				bool vpn = NetDiscovery.IsTailscaleAddress(source);
+				if (host.Address == null || (host.IsLoopback && !loopback) || (host.IsVpn && !vpn && !loopback))
 				{
 					host.Address = source + ":" + info.TcpPort;
 					host.IsLoopback = loopback;
+					host.IsVpn = vpn;
 				}
 				host.Info = info;
 				host.LastSeen = now;
@@ -446,6 +560,32 @@ namespace BPRE.Multiplayer
 			foreach (IPAddress target in NetDiscovery.GetProbeTargets())
 			{
 				TrySend(udp, request, target);
+			}
+			List<IPAddress> vpnPeers = m_vpnPeers;
+			foreach (IPAddress peer in vpnPeers)
+			{
+				TrySend(udp, request, peer);
+			}
+			if (now >= m_nextVpnRefresh && !m_vpnRefreshRunning)
+			{
+				m_nextVpnRefresh = now + VpnRefreshInterval;
+				m_vpnRefreshRunning = true;
+				Thread refresh = new Thread(() =>
+				{
+					try
+					{
+						m_vpnPeers = NetDiscovery.GetTailscalePeers();
+					}
+					finally
+					{
+						m_vpnRefreshRunning = false;
+					}
+				})
+				{
+					IsBackground = true,
+					Name = "BPRE.Net.TailscalePeers"
+				};
+				refresh.Start();
 			}
 			foreach (string direct in DirectTargets)
 			{

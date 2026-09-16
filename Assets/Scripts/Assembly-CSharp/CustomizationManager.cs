@@ -36,7 +36,7 @@ public class CustomizationManager
 
 	public static bool IsPartUnlocked(BasePart part)
 	{
-		if (INSettings.GetBool(INFeature.UnlockCustomParts))
+		if (INSettings.GetBool(INFeature.UnlockCustomParts) || BPRE.Fun.RainbowRocket.IsRainbowRocket(part))
 		{
 			return true;
 		}

@@ -11,7 +11,7 @@ namespace BPRE.Multiplayer
 	/// </summary>
 	public static class NetProtocol
 	{
-		public const int ProtocolVersion = 1;
+		public const int ProtocolVersion = 2;
 
 		public const int DefaultPort = 7777;
 
@@ -20,6 +20,10 @@ namespace BPRE.Multiplayer
 		public const int MaxMessageSize = 4 * 1024 * 1024;
 
 		public const int MaxNameLength = 16;
+
+		public const int MaxServerNameLength = 24;
+
+		public const int MaxPasswordLength = 32;
 
 		public const int MaxChatLength = 200;
 
@@ -54,6 +58,27 @@ namespace BPRE.Multiplayer
 			return result;
 		}
 
+		public static string SanitizeServerName(string name)
+		{
+			string result = SanitizeChat(name);
+			return result.Length > MaxServerNameLength ? result.Substring(0, MaxServerNameLength) : result;
+		}
+
+		/// <summary>Proof of the password without sending it: SHA-256 over nonce and password, lower-case hex.</summary>
+		public static string PasswordProof(string nonce, string password)
+		{
+			using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+			{
+				byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes((nonce ?? string.Empty) + "|" + (password ?? string.Empty)));
+				StringBuilder sb = new StringBuilder(hash.Length * 2);
+				foreach (byte b in hash)
+				{
+					sb.Append(b.ToString("x2"));
+				}
+				return sb.ToString();
+			}
+		}
+
 		public static string SanitizeChat(string text)
 		{
 			if (string.IsNullOrEmpty(text))
@@ -84,6 +109,8 @@ namespace BPRE.Multiplayer
 		Welcome = 2,
 		Reject = 3,
 		PlayerJoined = 4,
+		AuthChallenge = 7,
+		AuthResponse = 8,
 		PlayerLeft = 5,
 		PlayerList = 6,
 

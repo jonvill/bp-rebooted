@@ -64,9 +64,11 @@ Hot features that can be added:
 
 ## Multiplayer (experimental)
 Press **F9** in the main menu (or type `mp` in the command interface) to open the multiplayer window.
-One player hosts (TCP port 7777, forward it for internet play). Games on the same network appear
-automatically in the join list (UDP port 7778); for other networks, or VPNs such as Tailscale, enter
-`ip:port` by hand. The host plays as usual: whatever level the host loads, everybody follows. Every
+The window has two tabs: **Join** lists every game found on the local network (UDP port 7778) and on
+your Tailscale VPN (all online Tailscale devices are asked directly); *Join by address...* covers
+everything else. **Host** starts a game (TCP port 7777, forward it for internet play) with a server name,
+an optional password and the starting mode. The host can change the mode at any time and kick or ban
+players from the player list. The host plays as usual: whatever level the host loads, everybody follows. Every
 player builds and drives their own contraption; the others are shown with name tags. Chat is built in.
 While you are in a multiplayer level the game never pauses time, so your vehicle does not freeze
 in mid-air for the others.
@@ -77,8 +79,13 @@ Modes (selected by the host):
 - **Capture the Flag** - a flag spawns on the ground away from the start; touch it and bring it back to the start zone.
 - **Battle** - other vehicles are solid once they leave the start zone; guns, TNT and ramming score points.
 
-Console: `mp host [port]`, `mp join <address>`, `mp leave`, `mp mode <freeplay|distance|ctf|battle>`, `mp say <text>`.
-Starter car for quick rounds (in a session, inside a level): **F7** builds a small car with engine, gearbox and motor wheels, **F8** starts or stops it, **F6** toggles the gearbox to reverse. The same buttons are in the F9 window.
+Console: `mp host [port] [password]`, `mp join <address> [password]`, `mp kick <name>`, `mp ban <name>`, `mp leave`, `mp mode <freeplay|distance|ctf|battle>`, `mp say <text>`.
+Starter car for quick rounds (in a session, inside a level): **F7** builds a small car with engine, gearbox and motor wheels, **F8** starts or stops it, **F6** toggles the gearbox to reverse.
+
+**Rainbow rocket** (new part, always unlocked): a rocket variant that shimmers in all colours, pushes
+harder and longer, leaves a rainbow trail and bursts into confetti on ignition. Pick it from the rocket
+skins in the construction screen, or press **F5** in any level to build a car with two rainbow rockets and
+drive off; **F4** fires the rockets, **F5** again goes back to building.
 Each vehicle is simulated only by its own player (the physics is not deterministic across machines), so
 collisions between players can look slightly different on each screen. Code lives in `Assets/Scripts/Multiplayer`.
 
